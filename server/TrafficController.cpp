@@ -167,18 +167,19 @@ StatusOr<std::unique_ptr<NetlinkListenerInterface>> TrafficController::makeSkDes
     return listener;
 }
 
-Status changeOwnerAndMode(const char* path, gid_t group, const char* debugName, bool netdOnly) {
+Status changeOwnerAndMode(const char* path, gid_t group, const char* debugName, mode_t groupMode) {
     int ret = chown(path, AID_ROOT, group);
     if (ret != 0) return statusFromErrno(errno, StringPrintf("change %s group failed", debugName));
 
-    if (netdOnly) {
+    if (!groupMode) {
         ret = chmod(path, S_IRWXU);
     } else {
         // Allow both netd and system server to obtain map fd from the path.
         // chmod doesn't grant permission to all processes in that group to
         // read/write the bpf map. They still need correct sepolicy to
         // read/write the map.
-        ret = chmod(path, S_IRWXU | S_IRGRP | S_IWGRP);
+        groupMode &= (S_IRGRP | S_IWGRP);
+        ret = chmod(path, S_IRWXU | groupMode);
     }
     if (ret != 0) return statusFromErrno(errno, StringPrintf("change %s mode failed", debugName));
     return netdutils::status::ok;
@@ -198,42 +199,52 @@ Status TrafficController::initMaps() {
     std::lock_guard guard(mMutex);
     RETURN_IF_NOT_OK(mCookieTagMap.init(COOKIE_TAG_MAP_PATH));
     RETURN_IF_NOT_OK(changeOwnerAndMode(COOKIE_TAG_MAP_PATH, AID_NET_BW_ACCT, "CookieTagMap",
-                                        false));
+                                        0060));
 
     RETURN_IF_NOT_OK(mUidCounterSetMap.init(UID_COUNTERSET_MAP_PATH));
     RETURN_IF_NOT_OK(changeOwnerAndMode(UID_COUNTERSET_MAP_PATH, AID_NET_BW_ACCT,
-                                        "UidCounterSetMap", false));
+                                        "UidCounterSetMap", 0060));
 
     RETURN_IF_NOT_OK(mAppUidStatsMap.init(APP_UID_STATS_MAP_PATH));
     RETURN_IF_NOT_OK(
-        changeOwnerAndMode(APP_UID_STATS_MAP_PATH, AID_NET_BW_STATS, "AppUidStatsMap", false));
+        changeOwnerAndMode(APP_UID_STATS_MAP_PATH, AID_NET_BW_STATS, "AppUidStatsMap", 0060));
 
     RETURN_IF_NOT_OK(mStatsMapA.init(STATS_MAP_A_PATH));
-    RETURN_IF_NOT_OK(changeOwnerAndMode(STATS_MAP_A_PATH, AID_NET_BW_STATS, "StatsMapA", false));
+    RETURN_IF_NOT_OK(changeOwnerAndMode(STATS_MAP_A_PATH, AID_NET_BW_STATS, "StatsMapA", 0060));
 
     RETURN_IF_NOT_OK(mStatsMapB.init(STATS_MAP_B_PATH));
-    RETURN_IF_NOT_OK(changeOwnerAndMode(STATS_MAP_B_PATH, AID_NET_BW_STATS, "StatsMapB", false));
+    RETURN_IF_NOT_OK(changeOwnerAndMode(STATS_MAP_B_PATH, AID_NET_BW_STATS, "StatsMapB", 0060));
 
     RETURN_IF_NOT_OK(mIfaceIndexNameMap.init(IFACE_INDEX_NAME_MAP_PATH));
     RETURN_IF_NOT_OK(changeOwnerAndMode(IFACE_INDEX_NAME_MAP_PATH, AID_NET_BW_STATS,
-                                        "IfaceIndexNameMap", false));
+                                        "IfaceIndexNameMap", 0060));
 
     RETURN_IF_NOT_OK(mIfaceStatsMap.init(IFACE_STATS_MAP_PATH));
     RETURN_IF_NOT_OK(changeOwnerAndMode(IFACE_STATS_MAP_PATH, AID_NET_BW_STATS, "IfaceStatsMap",
-                                        false));
+                                        0060));
 
     RETURN_IF_NOT_OK(mConfigurationMap.init(CONFIGURATION_MAP_PATH));
     RETURN_IF_NOT_OK(changeOwnerAndMode(CONFIGURATION_MAP_PATH, AID_NET_BW_STATS,
-                                        "ConfigurationMap", false));
+                                        "ConfigurationMap", 0060));
     RETURN_IF_NOT_OK(
             mConfigurationMap.writeValue(UID_RULES_CONFIGURATION_KEY, DEFAULT_CONFIG, BPF_ANY));
     RETURN_IF_NOT_OK(mConfigurationMap.writeValue(CURRENT_STATS_MAP_CONFIGURATION_KEY, SELECT_MAP_A,
                                                   BPF_ANY));
 
     RETURN_IF_NOT_OK(mUidOwnerMap.init(UID_OWNER_MAP_PATH));
-    RETURN_IF_NOT_OK(changeOwnerAndMode(UID_OWNER_MAP_PATH, AID_ROOT, "UidOwnerMap", true));
+    RETURN_IF_NOT_OK(changeOwnerAndMode(UID_OWNER_MAP_PATH, AID_ROOT, "UidOwnerMap", 0));
     RETURN_IF_NOT_OK(mUidOwnerMap.clear());
     RETURN_IF_NOT_OK(mUidPermissionMap.init(UID_PERMISSION_MAP_PATH));
+
+    RETURN_IF_NOT_OK(changeOwnerAndMode(XT_BPF_EGRESS_PROG_PATH, AID_NET_ADMIN,
+                                        "SkfilterEgressMap", 0040));
+    RETURN_IF_NOT_OK(changeOwnerAndMode(XT_BPF_INGRESS_PROG_PATH, AID_NET_ADMIN,
+                                        "SkfilterIngressMap", 0040));
+    RETURN_IF_NOT_OK(changeOwnerAndMode(XT_BPF_WHITELIST_PROG_PATH, AID_NET_ADMIN,
+                                        "SkfilterWhitelistMap", 0040));
+    RETURN_IF_NOT_OK(changeOwnerAndMode(XT_BPF_BLACKLIST_PROG_PATH, AID_NET_ADMIN,
+                                        "SkfilterBlacklistMap", 0040));
+
     return netdutils::status::ok;
 }
 
